@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sopa de Letras</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        const WordSearch = () => {
+          const [grid, setGrid] = useState([]);
+          const [words, setWords] = useState([]);
+          const [foundWords, setFoundWords] = useState([]);
+          const [selectedCells, setSelectedCells] = useState([]);
+          const [gameStarted, setGameStarted] = useState(false);
+          const [difficulty, setDifficulty] = useState(null);
+          const [score, setScore] = useState(0);
+          const [wordLists, setWordLists] = useState(null);
+          const [selectedTheme, setSelectedTheme] = useState(null);
+          const [showThemeSelector, setShowThemeSelector] = useState(false);
+          const [isDragging, setIsDragging] = useState(false);
+          const [dragStart, setDragStart] = useState(null);
+          const [isFullscreen, setIsFullscreen] = useState(false);
+
+          const toggleFullscreen = () => {
+            if (!document.fullscreenElement) {
+              document.documentElement.requestFullscreen();
+              setIsFullscreen(true);
+            } else {
+              document.exitFullscreen();
+              setIsFullscreen(false);
+            }
+          };
+
+          useEffect(() => {
+            const handleFullscreenChange = () => {
+              setIsFullscreen(!!document.fullscreenElement);
+            };
+            
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+          }, []);
+
+          // Cargar palabras del archivo JSON
+          useEffect(() => {
+            fetch('palabras-sopa.json')
+              .then(response => response.json())
+              .then(data => setWordLists(data.temas))
+              .catch(error => {
+                console.error('Error cargando palabras:', error);
+                // Palabras de respaldo si no se puede cargar el archivo
+                setWordLists({
+                  general: {
+                    facil: ['GATO', 'PERRO', 'CASA', 'SOL', 'MAR'],
+                    medio: ['AVION', 'LIBRO', 'ARBOL', 'FLOR', 'MESA', 'SILLA'],
+                    dificil: ['MARIPOSA', 'ELEFANTE', 'DINOSAURIO', 'MONTAÑA', 'COMPUTADORA']
+                  }
+                });
+              });
+          }, []);
+
+          const getRandomWords = (theme, level) => {
+            if (!wordLists) return [];
+            
+            let allWords = [];
+            
+            if (theme === 'todas') {
+              // Mezclar palabras de todos los temas
+              Object.keys(wordLists).forEach(themeName => {
+                if (wordLists[themeName][level]) {
+                  allWords = [...allWords, ...wordLists[themeName][level]];
+                }
+              });
+            } else {
+              // Usar palabras del tema seleccionado
+              allWords = [...(wordLists[theme]?.[level] || [])];
+            }
+            
+            // Mezclar completamente el array
+            for (let i = allWords.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [allWords[i], allWords[j]] = [allWords[j], allWords[i]];
+            }
+            
+            // Seleccionar número de palabras según dificultad
+            const count = level === 'facil' ? 5 : level === 'medio' ? 6 : 7;
+            return allWords.slice(0, Math.min(count, allWords.length));
+          };
+
+          const generateGrid = (wordList, size) => {
+            const newGrid = Array(size).fill(null).map(() => Array(size).fill(''));
+            const placedWords = [];
+
+            wordList.forEach(word => {
+              let placed = false;
+              let attempts = 0;
+
+              while (!placed && attempts < 100) {
+                const direction = Math.random() > 0.5 ? 'horizontal' : 'vertical';
+                const row = Math.floor(Math.random() * size);
+                const col = Math.floor(Math.random() * size);
+
+                if (direction === 'horizontal' && col + word.length <= size) {
+                  let canPlace = true;
+                  for (let i = 0; i < word.length; i++) {
+                    if (newGrid[row][col + i] !== '' && newGrid[row][col + i] !== word[i]) {
+                      canPlace = false;
+                      break;
+                    }
+                  }
+                  if (canPlace) {
+                    const positions = [];
+                    for (let i = 0; i < word.length; i++) {
+                      newGrid[row][col + i] = word[i];
+                      positions.push(`${row}-${col + i}`);
+                    }
+                    placedWords.push({ word, positions });
+                    placed = true;
+                  }
+                } else if (direction === 'vertical' && row + word.length <= size) {
+                  let canPlace = true;
+                  for (let i = 0; i < word.length; i++) {
+                    if (newGrid[row + i][col] !== '' && newGrid[row + i][col] !== word[i]) {
+                      canPlace = false;
+                      break;
+                    }
+                  }
+                  if (canPlace) {
+                    const positions = [];
+                    for (let i = 0; i < word.length; i++) {
+                      newGrid[row + i][col] = word[i];
+                      positions.push(`${row + i}-${col}`);
+                    }
+                    placedWords.push({ word, positions });
+                    placed = true;
+                  }
+                }
+                attempts++;
+              }
+            });
+
+            for (let i = 0; i < size; i++) {
+              for (let j = 0; j < size; j++) {
+                if (newGrid[i][j] === '') {
+                  newGrid[i][j] = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+                }
+              }
+            }
+
+            return { grid: newGrid, words: placedWords };
+          };
+
+          const startGame = (level, theme) => {
+            setDifficulty(level);
+            setSelectedTheme(theme);
+            const size = level === 'facil' ? 8 : level === 'medio' ? 10 : 12;
+            const selectedWords = getRandomWords(theme, level);
+            const { grid: newGrid, words: placedWords } = generateGrid(selectedWords, size);
+            setGrid(newGrid);
+            setWords(placedWords);
+            setFoundWords([]);
+            setSelectedCells([]);
+            setGameStarted(true);
+            setScore(0);
+          };
+
+          const playAgain = () => {
+            startGame(difficulty, selectedTheme);
+          };
+
+          const selectDifficulty = (level) => {
+            setDifficulty(level);
+            setShowThemeSelector(true);
+          };
+
+          const handleCellStart = (row, col) => {
+            setIsDragging(true);
+            setDragStart({ row, col });
+            setSelectedCells([`${row}-${col}`]);
+          };
+
+          const handleCellMove = (row, col) => {
+            if (!isDragging || !dragStart) return;
+            
+            const cellId = `${row}-${col}`;
+            
+            // Verificar si el movimiento es en línea recta (horizontal, vertical o diagonal)
+            const rowDiff = Math.abs(row - dragStart.row);
+            const colDiff = Math.abs(col - dragStart.col);
+            
+            // Solo permitir líneas rectas
+            if (rowDiff !== 0 && colDiff !== 0 && rowDiff !== colDiff) return;
+            
+            // Construir el array de celdas seleccionadas
+            const newSelected = [];
+            const steps = Math.max(rowDiff, colDiff);
+            const rowStep = rowDiff === 0 ? 0 : (row - dragStart.row) / steps;
+            const colStep = colDiff === 0 ? 0 : (col - dragStart.col) / steps;
+            
+            for (let i = 0; i <= steps; i++) {
+              const currentRow = dragStart.row + Math.round(i * rowStep);
+              const currentCol = dragStart.col + Math.round(i * colStep);
+              newSelected.push(`${currentRow}-${currentCol}`);
+            }
+            
+            setSelectedCells(newSelected);
+          };
+
+          const handleCellEnd = () => {
+            if (!isDragging) return;
+            
+            setIsDragging(false);
+            
+            // Verificar si se encontró alguna palabra
+            let wordFound = false;
+            words.forEach(wordObj => {
+              if (foundWords.includes(wordObj.word)) return;
+              
+              // Verificar si las celdas seleccionadas coinciden con la palabra
+              const positions = wordObj.positions;
+              const selectedSet = new Set(selectedCells);
+              const positionsSet = new Set(positions);
+              
+              // Verificar coincidencia exacta (en cualquier dirección)
+              if (selectedCells.length === positions.length) {
+                const allMatch = positions.every(pos => selectedSet.has(pos));
+                const allMatchReverse = selectedCells.every(pos => positionsSet.has(pos));
+                
+                if (allMatch || allMatchReverse) {
+                  setFoundWords([...foundWords, wordObj.word]);
+                  setScore(s => s + 20);
+                  wordFound = true;
+                }
+              }
+            });
+            
+            // Limpiar selección si no se encontró palabra
+            if (!wordFound) {
+              setSelectedCells([]);
+            }
+            
+            setDragStart(null);
+          };
+
+          if (!wordLists) {
+            return (
+              <div className="min-h-screen bg-gradient-to-b from-green-400 to-teal-500 p-4 flex items-center justify-center">
+                <div className="text-white text-2xl">Cargando palabras...</div>
+              </div>
+            );
+          }
+
+          if (!gameStarted && !showThemeSelector) {
+            return (
+              <div className="min-h-screen bg-gradient-to-b from-green-400 to-teal-500 p-4">
+                <div className="max-w-4xl mx-auto text-white">
+                  <a
+                    href="index.html"
+                    className="mb-4 inline-block bg-white text-teal-600 px-4 py-2 rounded-lg font-bold no-underline"
+                  >
+                    🏠 Volver al Menú
+                  </a>
+                  
+                  <h2 className="text-4xl font-bold mb-8 text-center">Sopa de Letras 🔤</h2>
+                  <p className="text-xl text-center mb-8">Elige tu nivel de dificultad:</p>
+                  
+                  <div className="grid md:grid-cols-3 gap-6">
+                    <button
+                      onClick={() => selectDifficulty('facil')}
+                      className="bg-green-500 hover:bg-green-600 rounded-xl p-8"
+                    >
+                      <h3 className="text-3xl font-bold mb-2">😊 Fácil</h3>
+                      <p className="text-sm">Palabras cortas</p>
+                      <p className="text-sm">Cuadrícula 8×8</p>
+                    </button>
+                    
+                    <button
+                      onClick={() => selectDifficulty('medio')}
+                      className="bg-yellow-500 hover:bg-yellow-600 rounded-xl p-8"
+                    >
+                      <h3 className="text-3xl font-bold mb-2">🤔 Medio</h3>
+                      <p className="text-sm">Palabras medianas</p>
+                      <p className="text-sm">Cuadrícula 10×10</p>
+                    </button>
+                    
+                    <button
+                      onClick={() => selectDifficulty('dificil')}
+                      className="bg-red-500 hover:bg-red-600 rounded-xl p-8"
+                    >
+                      <h3 className="text-3xl font-bold mb-2">🔥 Difícil</h3>
+                      <p className="text-sm">Palabras largas</p>
+                      <p className="text-sm">Cuadrícula 12×12</p>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (!gameStarted && showThemeSelector) {
+            const themes = [
+              { id: 'todas', name: 'Todas (Mezcla)', emoji: '🎲' },
+              { id: 'animales', name: 'Animales', emoji: '🦁' },
+              { id: 'colores', name: 'Colores', emoji: '🎨' },
+              { id: 'comida', name: 'Comida', emoji: '🍕' },
+              { id: 'naturaleza', name: 'Naturaleza', emoji: '🌳' },
+              { id: 'objetos', name: 'Objetos', emoji: '📦' },
+              { id: 'deportes', name: 'Deportes', emoji: '⚽' },
+              { id: 'escuela', name: 'Escuela', emoji: '📚' },
+              { id: 'transporte', name: 'Transporte', emoji: '🚗' }
+            ];
+
+            return (
+              <div className="min-h-screen bg-gradient-to-b from-green-400 to-teal-500 p-4">
+                <div className="max-w-5xl mx-auto text-white">
+                  <button
+                    onClick={() => {
+                      setShowThemeSelector(false);
+                      setDifficulty(null);
+                    }}
+                    className="mb-4 bg-white text-teal-600 px-4 py-2 rounded-lg font-bold"
+                  >
+                    ← Volver a Niveles
+                  </button>
+                  
+                  <h2 className="text-4xl font-bold mb-4 text-center">Elige una temática 🎯</h2>
+                  <p className="text-xl text-center mb-8">Nivel: {difficulty === 'facil' ? 'Fácil 😊' : difficulty === 'medio' ? 'Medio 🤔' : 'Difícil 🔥'}</p>
+                  
+                  <div className="grid md:grid-cols-3 gap-4">
+                    {themes.map(theme => (
+                      <button
+                        key={theme.id}
+                        onClick={() => startGame(difficulty, theme.id)}
+                        className="bg-white bg-opacity-20 hover:bg-opacity-30 rounded-xl p-6 transform transition hover:scale-105"
+                      >
+                        <div className="text-5xl mb-2">{theme.emoji}</div>
+                        <h3 className="text-xl font-bold">{theme.name}</h3>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          const allWordsFound = foundWords.length === words.length;
+
+          return (
+            <div className="min-h-screen bg-gradient-to-b from-green-400 to-teal-500 p-4">
+              <div className={`mx-auto text-white ${isFullscreen ? 'max-w-7xl' : 'max-w-6xl'}`}>
+                <div className="flex justify-between items-center mb-4">
+                  <a
+                    href="index.html"
+                    className={`bg-white text-teal-600 px-4 py-2 rounded-lg font-bold no-underline ${isFullscreen ? 'text-xl' : ''}`}
+                  >
+                    🏠 Menú
+                  </a>
+                  <div className={`font-bold ${isFullscreen ? 'text-4xl' : 'text-2xl'}`}>Puntos: {score}</div>
+                  <button
+                    onClick={toggleFullscreen}
+                    className={`bg-white text-teal-600 px-4 py-2 rounded-lg font-bold ${isFullscreen ? 'text-xl' : ''}`}
+                  >
+                    {isFullscreen ? '🗗 Salir' : '⛶ Ampliar'}
+                  </button>
+                </div>
+
+                {allWordsFound && (
+                  <div className="bg-green-500 text-white text-center p-4 rounded-xl mb-4">
+                    <h3 className="text-3xl font-bold mb-2">¡Felicidades! 🎉</h3>
+                    <p className="text-xl">¡Encontraste todas las palabras!</p>
+                    <div className="flex gap-4 justify-center mt-4 flex-wrap">
+                      <button
+                        onClick={playAgain}
+                        className="bg-white text-green-600 px-6 py-2 rounded-lg font-bold"
+                      >
+                        Otra Sopa (misma dificultad)
+                      </button>
+                      <button
+                        onClick={() => {
+                          setGameStarted(false);
+                          setShowThemeSelector(false);
+                          setDifficulty(null);
+                        }}
+                        className="bg-white text-green-600 px-6 py-2 rounded-lg font-bold"
+                      >
+                        Cambiar Nivel o Tema
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid lg:grid-cols-4 gap-6">
+                  <div className="lg:col-span-3">
+                    <div className="bg-white rounded-xl p-4 inline-block">
+                      <div 
+                        className="grid gap-1 select-none" 
+                        style={{ gridTemplateColumns: `repeat(${grid.length}, minmax(0, 1fr))` }}
+                        onMouseLeave={handleCellEnd}
+                        onTouchEnd={handleCellEnd}
+                      >
+                        {grid.map((row, i) =>
+                          row.map((cell, j) => {
+                            const cellId = `${i}-${j}`;
+                            const isSelected = selectedCells.includes(cellId);
+                            const isPartOfFoundWord = words.some(
+                              w => foundWords.includes(w.word) && w.positions.includes(cellId)
+                            );
+
+                            return (
+                              <div
+                                key={cellId}
+                                onMouseDown={() => handleCellStart(i, j)}
+                                onMouseEnter={() => handleCellMove(i, j)}
+                                onMouseUp={handleCellEnd}
+                                onTouchStart={(e) => {
+                                  e.preventDefault();
+                                  handleCellStart(i, j);
+                                }}
+                                onTouchMove={(e) => {
+                                  e.preventDefault();
+                                  const touch = e.touches[0];
+                                  const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                                  if (element && element.dataset.row && element.dataset.col) {
+                                    handleCellMove(parseInt(element.dataset.row), parseInt(element.dataset.col));
+                                  }
+                                }}
+                                onTouchEnd={(e) => {
+                                  e.preventDefault();
+                                  handleCellEnd();
+                                }}
+                                data-row={i}
+                                data-col={j}
+                                className={`font-bold rounded transition flex items-center justify-center cursor-pointer ${
+                                  isFullscreen ? 'w-16 h-16 text-2xl' : 'w-10 h-10 text-lg'
+                                } ${
+                                  isPartOfFoundWord
+                                    ? 'bg-green-400 text-white'
+                                    : isSelected
+                                    ? 'bg-blue-400 text-white'
+                                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                                }`}
+                              >
+                                {cell}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white bg-opacity-20 rounded-xl p-6">
+                    <h3 className={`font-bold mb-4 ${isFullscreen ? 'text-3xl' : 'text-2xl'}`}>Palabras a encontrar:</h3>
+                    <ul className="space-y-2">
+                      {words.map(wordObj => (
+                        <li
+                          key={wordObj.word}
+                          className={`font-bold ${isFullscreen ? 'text-2xl' : 'text-xl'} ${
+                            foundWords.includes(wordObj.word)
+                              ? 'line-through text-green-300'
+                              : 'text-white'
+                          }`}
+                        >
+                          {foundWords.includes(wordObj.word) ? '✓' : '○'} {wordObj.word}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<WordSearch />);
+    </script>
+
+
+<script>
+  const REDES_SOCIALES = {
+    instagram: "https://instagram.com/academiadivertida",
+    facebook: "https://facebook.com/academiadivertida",
+    youtube: "https://youtube.com/@academiadivertida",
+    amazon: "https://amazon.com/author/academiadivertida"
+  };
+</script>
+
+<footer class="bg-gray-900 text-white py-8 mt-auto">
+  <div class="max-w-6xl mx-auto px-4">
+    <div class="flex justify-center gap-6 mb-6">
+      <a id="link-instagram" href="" target="_blank" rel="noopener" class="hover:scale-110 transform transition" title="Instagram">
+        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+      </a>
+      <a id="link-facebook" href="" target="_blank" rel="noopener" class="hover:scale-110 transform transition" title="Facebook">
+        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+      </a>
+      <a id="link-youtube" href="" target="_blank" rel="noopener" class="hover:scale-110 transform transition" title="YouTube">
+        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+      </a>
+      <a id="link-amazon" href="" target="_blank" rel="noopener" class="hover:scale-110 transform transition" title="Libros">
+        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L3 7v10l9 5 9-5V7l-9-5zm0 2.18L18.82 8 12 11.82 5.18 8 12 4.18zM5 9.82L11 13v7.18L5 17V9.82zm14 0V17l-6 3.18V13l6-3.18z"/></svg>
+      </a>
+    </div>
+    <div class="text-center text-sm text-gray-400 mb-4">
+      <a href="index.html" class="hover:text-white transition mx-2">Inicio</a>
+      <span>|</span>
+      <a href="sobre-nosotros.html" class="hover:text-white transition mx-2">Sobre Nosotros</a>
+      <span>|</span>
+      <a href="contacto.html" class="hover:text-white transition mx-2">Síguenos</a>
+      <span>|</span>
+      <a href="privacidad.html" class="hover:text-white transition mx-2">Privacidad</a>
+    </div>
+    <div class="text-center text-sm text-gray-500">
+      © <span id="year"></span> Academia Divertida - Aprende Jugando 🎓
+    </div>
+  </div>
+</footer>
+<script>
+  document.getElementById("year").textContent = new Date().getFullYear();
+  if (typeof REDES_SOCIALES !== "undefined") {
+    const links = {
+      "link-instagram": REDES_SOCIALES.instagram,
+      "link-facebook": REDES_SOCIALES.facebook,
+      "link-youtube": REDES_SOCIALES.youtube,
+      "link-amazon": REDES_SOCIALES.amazon
+    };
+    Object.keys(links).forEach(id => {
+      const element = document.getElementById(id);
+      if (element && links[id]) {
+        element.href = links[id];
+      } else if (element) {
+        element.style.display = "none";
+      }
+    });
+  }
+</script>
+</body>
+</html>
